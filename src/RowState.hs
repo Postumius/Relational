@@ -9,8 +9,8 @@ module RowState
 ( Atom(Null, Number, Words)
 , IndexedRow
 , ColType
-, number
-, words
+, numberT
+, wordsT
 , access
 , whenM
 , whenExists
@@ -41,16 +41,16 @@ type ColType a = (Atom -> Either String a, a -> Atom)
 
 wrongType atom typeName = Left $ "Value '"++ show atom ++"' doesn't have type '"++ typeName ++"'"
 
-number :: ColType Int
-number =
+numberT :: ColType Int
+numberT =
   let unwrapNumber (Number n) = Right n
-      unwrapNumber atom = wrongType atom "number"
+      unwrapNumber atom = wrongType atom "numberT"
   in (unwrapNumber, Number)
 
-words :: ColType String
-words = 
+wordsT :: ColType String
+wordsT = 
   let unwrapWords (Words n) = Right n
-      unwrapWords atom = wrongType atom "words"
+      unwrapWords atom = wrongType atom "wordsT"
   in (unwrapWords, Words)
 
 newtype RowState a = RowState { runRS :: [IndexedRow] -> Either String [(a, IndexedRow)] }
