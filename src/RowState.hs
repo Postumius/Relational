@@ -9,8 +9,8 @@ module RowState
 ( Atom(Null, Number, Words)
 , IndexedRow
 , ColType
-, numT
-, wordT
+, number
+, words
 , access
 , whenM
 , whenExists
@@ -23,8 +23,8 @@ import Utilities
 import Data.Function
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Functor
 import Control.Monad.State
-import Control.Monad.Error.Class
 import Data.Either
 
 data Atom = Null | Number Int | Words String
@@ -41,43 +41,91 @@ type ColType a = (Atom -> Either String a, a -> Atom)
 
 wrongType atom typeName = Left $ "Value '"++ show atom ++"' doesn't have type '"++ typeName ++"'"
 
-numT :: ColType Int
-numT =
+number :: ColType Int
+number =
   let unwrapNumber (Number n) = Right n
-      unwrapNumber atom = wrongType atom "numT"
+      unwrapNumber atom = wrongType atom "number"
   in (unwrapNumber, Number)
 
-wordT :: ColType String
-wordT = 
+words :: ColType String
+words = 
   let unwrapWords (Words n) = Right n
-      unwrapWords atom = wrongType atom "wordT"
+      unwrapWords atom = wrongType atom "words"
   in (unwrapWords, Words)
 
-type RowState a = StateT (Map String Atom) (Either String) a
+newtype RowState a = RowState { runRS :: [IndexedRow] -> Either String [(a, IndexedRow)] }
+
+instance Functor RowState where
+  fmap = (<$>)
+
+instance Applicative RowState where
+  pure x = RowState $ \rows -> zip (repeat x) rows & Right
+  (<*>) = ap
+
+instance Monad RowState where
+  (RowState h) >>= f = RowState $ \rows -> do
+    (as, rows') <- h rows <&> unzip
+    let gs = map (f .- runRS) as
+    zip gs rows'
+      & mapM (\(g, row) -> g [row])
+      <&> concat
+
+getRow :: RowState IndexedRow
+getRow = RowState $ \rows -> zip rows rows & Right
+
+putRow :: IndexedRow -> RowState ()
+putRow row = RowState $ \rows -> repeat ((), row) & take (length rows) & Right
+
+modifyRow :: (IndexedRow -> IndexedRow) -> RowState ()
+modifyRow f = getRow >>= (f .- putRow)
+
+deleteRow :: RowState ()
+deleteRow = RowState $ const [] .- Right
+
+bring :: [IndexedRow] -> RowState ()
+bring otherRows = RowState $ \rows ->
+  Map.union <$> rows <*> otherRows
+  & zip (repeat ())
+  & Right
+
+liftEither :: Either String a -> RowState a
+liftEither (Right a) = return a
+liftEither (Left e) = RowState $ const (Left e)
 
 access :: ColType a -> String -> RowState a
 access (unwrap, _) key = do
   let errMsg = "field '"++ key ++"' not found"
-  row <- get
+  row <- getRow
   atom <- Map.lookup key row & explain errMsg & liftEither
   atom & unwrap & liftEither
 
 whenExists :: ColType a -> String -> RowState () -> RowState ()
 whenExists (unwrap, _) key rowOp = do
-  row <- get
+  row <- getRow
   let exists = (Map.lookup key row & explain "") >>= unwrap & isRight
   when exists rowOp
 
 bind :: ColType a -> String -> a -> RowState ()
-bind (_, wrap) key val = Map.insert key (wrap val) & modify
+bind (_, wrap) key val = Map.insert key (wrap val) & modifyRow
 
 release :: String -> RowState ()
-release = Map.delete .- modify
+release = Map.delete .- modifyRow
 
--- deleteRow :: RowState ()
--- deleteRow = Left Nothing & liftEither 
+keepOnly :: [String] -> RowState ()
+keepOnly fields = zip fields (repeat ())
+  & Map.fromList 
+  & flip Map.intersection 
+  & modifyRow
 
-exec :: RowState a -> IndexedRow -> Either String IndexedRow
-exec = execStateT
+exec :: RowState a -> [IndexedRow] -> Either String [IndexedRow]
+exec rowState rows = runRS rowState rows <&> map snd
 
-row = Map.fromList [("n",Number 1),("m",Number 2)]
+row1 = Map.fromList [("n",Number 1),("m",Number 2)]
+
+row2 = Map.fromList [("a",Number 1),("b",Number 2)]
+
+row3 = Map.fromList [("x",Number 1),("y",Number 2)]
+
+testRS = do
+  row <- getRow
+  when ("n" `Map.member` row) $ modifyRow (Map.insert "u" $ Words "bla")

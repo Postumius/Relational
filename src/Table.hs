@@ -29,7 +29,6 @@ module Table
 , fromRows
 , sortIntoTables
 , mapRowOps_
-, items
 ) where
 
 import Utilities
@@ -65,9 +64,11 @@ instance Show Table where
             intercalateS (" | "++) row .
             (" |"++) )
         line = (" "++) . showString (replicate (length (title "") - 1) '-')
-    in ("\n"++) . 
-       intercalateS ("\n"++) (title:line:rows) . 
-       ("\n"++)
+    in if Map.null (table & toMap) 
+       then ("\n | Empty |\n"++)
+       else ("\n"++) . 
+            intercalateS ("\n"++) (title:line:rows) . 
+            ("\n"++)
 
 toKeyVal hdr' row = 
   let (key, val) = hdr' & both %~ Map.restrictKeys row
@@ -78,6 +79,7 @@ internalMakeTable header rows = rows
   & Map.fromList
   & Table
 
+makeTable :: ([String], [String]) -> [[Atom]] -> Table
 makeTable listHeader rowData = 
   let header = listHeader & both %~ Set.fromList
       rows = rowData & map (zip (uncurry (++) listHeader) .- Map.fromList)
@@ -163,8 +165,10 @@ fieldsL f (Table mp) =
         & Table
   in fmap setFields (f fields)
 
+select :: [String] -> Table -> Table
 select = Set.fromList .- set fieldsL
 
+filter :: (IndexedRow -> Bool) -> Table -> Table
 filter = Data.List.filter .- over rowsL
 
 hasVal :: String -> Atom -> IndexedRow -> Bool
@@ -184,6 +188,7 @@ filterByKey key =
   .- maybe Map.empty (Map.singleton key) 
   .- Table
   
+innerJoin :: (IndexedRow -> IndexedRow -> Bool) -> Table -> Table -> Table
 innerJoin condition table2 table1 =
   let unionFields _n =
         (table1^.headerL._n) `Set.union` (table2^.headerL._n)
@@ -191,7 +196,7 @@ innerJoin condition table2 table1 =
       cartesianProduct = (,) <$> table1^.rowsL <*> table2^.rowsL
       rows = cartesianProduct
         & Data.List.filter (uncurry condition) 
-        & map (uncurry Map.union)
+        & map (uncurry $ flip Map.union)
   in internalMakeTable header rows
 
 onCols :: [(String, String)] -> IndexedRow -> IndexedRow -> Bool
@@ -239,17 +244,33 @@ toRows = view rowsL
 
 fromRows = (`zip` repeat Map.empty) .- Map.fromList .- Table
 
+applyRowOp rowOp table = table & view rowsL & (mapM $ exec rowOp)
+
 sortIntoTables :: Either String [IndexedRow] -> Either String [Table]
 sortIntoTables = fmap $ groupAllWith Map.keys .- map (toList .- fromRows)
 
 mapRowOps_ rowOps = toRows .- mapM (exec rowOps)
 
-items = makeTable
-  (["item"],       ["location"])
-  [[Words "laptop", Words "living room"],
-   [Words "bed",    Words "back room"],
-   [Words "couch",  Words "living room"],
-   [Words "living room", Words "space"],
-   [Words "back room", Words "space"],
-   [Words "space", Words "space"]]
+things = makeTable
+  ( ["item"],             ["description",                                          "location"])
+  [ [Words "space",       Words "the player shouldn't ever encounter this object", Words "space"]
+  , [Words "living room", Words "the room that you live in",                       Words "space"]
+  , [Words "player",      Words "It's meeee!",                                     Words "living room"]
+  , [Words "couch",       Words "it's like a long and soft chair",                 Words "living room"]
+  , [Words "basket",      Words "a woven container",                               Words "living room"]
+  , [Words "drum",        Words "you beat it to make rhythms",                     Words "basket"]
+  , [Words "harmonica",   Words "a mouth organ",                                   Words "basket"]
+  , [Words "rattle",      Words "shake it, baby",                                  Words "basket"]
+  , [Words "dining room", Words "the room for dining",                             Words "space"]
+  , [Words "table",       Words "a raised surface for putting things on",          Words "living room"]
+  , [Words "bathroom",    Words "It's not just for bathing!",                      Words "space"]
+  , [Words "toilet",      Words "where the real work gets done",                   Words "bathroom"]
+  ]
 
+leadsTo = makeTable 
+  ( ["from",              "to"], [])
+  [ [Words "living room", Words "dining room"]
+  , [Words "dining room", Words "living room"]
+  , [Words "living room", Words "bathroom"]
+  , [Words "bathroom",    Words "living room"]
+  ]
