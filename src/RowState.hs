@@ -23,9 +23,9 @@ import Utilities
 import Data.Function
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Functor
 import Control.Monad.State
 import Data.Either
+import Data.Functor
 import Control.Monad.Error.Class
 import Control.Monad.Trans.Except
 
@@ -55,48 +55,18 @@ wordsT =
       unwrapWords atom = wrongType atom "wordsT"
   in (unwrapWords, Words)
 
-newtype RowState a = RowState { runRS :: [IndexedRow] -> Either String [(a, IndexedRow)] }
+type RowState a = StateT IndexedRow (ExceptT String []) a
 
-type RowState' a = StateT IndexedRow (ExceptT String []) a
-
-instance Functor RowState where
-  fmap = (<$>)
-
-instance Applicative RowState where
-  pure x = RowState $ \rows -> zip (repeat x) rows & Right
-  (<*>) = ap
-
-instance Monad RowState where
-  (RowState h) >>= f = RowState $ \rows -> do
-    (as, rows') <- h rows <&> unzip
-    let gs = map (f .- runRS) as
-    zip gs rows'
-      & mapM (\(g, row) -> g [row])
-      <&> concat
-
-getRow :: RowState IndexedRow
-getRow = RowState $ \rows -> zip rows rows & Right
-
-putRow :: IndexedRow -> RowState ()
-putRow row = RowState $ \rows -> repeat ((), row) & take (length rows) & Right
-
-modifyRow :: (IndexedRow -> IndexedRow) -> RowState ()
-modifyRow f = getRow >>= (f .- putRow)
-
-deleteRow :: RowState' ()
+deleteRow :: RowState ()
 deleteRow = StateT $ const $ lift []
 
-bring :: [IndexedRow] -> RowState' ()
+bring :: [IndexedRow] -> RowState ()
 bring otherRows = StateT $ \row ->
   Map.union <$> pure row <*> otherRows
   & zip (repeat ())
   & lift
 
-liftEither' :: Either String a -> RowState a
-liftEither' (Right a) = return a
-liftEither' (Left e) = RowState $ const (Left e)
-
-access :: ColType a -> String -> RowState' a
+access :: ColType a -> String -> RowState a
 access (unwrap, _) key = do
   let errMsg = "field '"++ key ++"' not found"
   row <- get
@@ -105,24 +75,36 @@ access (unwrap, _) key = do
 
 whenExists :: ColType a -> String -> RowState () -> RowState ()
 whenExists (unwrap, _) key rowOp = do
-  row <- getRow
+  row <- get
   let exists = (Map.lookup key row & explain "") >>= unwrap & isRight
   when exists rowOp
 
-bind :: ColType a -> String -> a -> RowState' ()
+bind :: ColType a -> String -> a -> RowState ()
 bind (_, wrap) key val = Map.insert key (wrap val) & modify
 
 release :: String -> RowState ()
-release = Map.delete .- modifyRow
+release = Map.delete .- modify
 
 keepOnly :: [String] -> RowState ()
 keepOnly fields = zip fields (repeat ())
   & Map.fromList 
   & flip Map.intersection 
-  & modifyRow
+  & modify
 
-exec :: RowState' a -> [IndexedRow] -> Either String [IndexedRow]
+exec :: RowState a -> [IndexedRow] -> Either String [IndexedRow]
 exec rowState = map (execStateT rowState .- runExceptT) .- concat .- sequence
+
+foldRows :: (a -> RowState a) -> a -> [IndexedRow] -> Either String [IndexedRow]
+foldRows f first rows = foldM (\(prevResult, rows') row -> do
+    (result, row') <- runStateT (f prevResult) row
+    return (result, row':rows')
+  ) 
+  (first, []) rows
+  & runExceptT
+  & sequence
+  <&> head
+  <&> snd
+  <&> reverse
 
 row2 = Map.fromList [("n",Number 1),("m",Number 2)]
 
