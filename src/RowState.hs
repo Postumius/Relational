@@ -95,16 +95,15 @@ exec :: RowState a -> [IndexedRow] -> Either String [IndexedRow]
 exec rowState = map (execStateT rowState .- runExceptT) .- concat .- sequence
 
 foldRows :: (a -> RowState a) -> a -> [IndexedRow] -> Either String [IndexedRow]
-foldRows f first rows = foldM (\(prevResult, rows') row -> do
+foldRows f first rows = foldM (\(prevResult, diffRows') row -> do
     (result, row') <- runStateT (f prevResult) row
-    return (result, row':rows')
+    return (result,  diffRows' . ([row']++))
   ) 
-  (first, []) rows
+  (first, id) rows
   & runExceptT
-  & sequence
-  <&> head
+  & head
   <&> snd
-  <&> reverse
+  <&> ($ [])
 
 row2 = Map.fromList [("n",Number 1),("m",Number 2)]
 
