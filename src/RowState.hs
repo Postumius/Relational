@@ -1,7 +1,7 @@
 #!/usr/bin/env cabal
 {- cabal:
 ghc-options: -Wunused-imports
-build-depends: base, containers, mtl
+build-depends: base, containers, mtl, transformers
 other-modules: Utilities
 -}
 
@@ -26,6 +26,8 @@ import qualified Data.Map.Strict as Map
 import Data.Functor
 import Control.Monad.State
 import Data.Either
+import Control.Monad.Error.Class
+import Control.Monad.Trans.Except
 
 data Atom = Null | Number Int | Words String
   deriving (Eq, Ord)
@@ -55,6 +57,8 @@ wordsT =
 
 newtype RowState a = RowState { runRS :: [IndexedRow] -> Either String [(a, IndexedRow)] }
 
+type RowState' a = StateT IndexedRow (ExceptT String []) a
+
 instance Functor RowState where
   fmap = (<$>)
 
@@ -79,23 +83,23 @@ putRow row = RowState $ \rows -> repeat ((), row) & take (length rows) & Right
 modifyRow :: (IndexedRow -> IndexedRow) -> RowState ()
 modifyRow f = getRow >>= (f .- putRow)
 
-deleteRow :: RowState ()
-deleteRow = RowState $ const [] .- Right
+deleteRow :: RowState' ()
+deleteRow = StateT $ const $ lift []
 
-bring :: [IndexedRow] -> RowState ()
-bring otherRows = RowState $ \rows ->
-  Map.union <$> rows <*> otherRows
+bring :: [IndexedRow] -> RowState' ()
+bring otherRows = StateT $ \row ->
+  Map.union <$> pure row <*> otherRows
   & zip (repeat ())
-  & Right
+  & lift
 
-liftEither :: Either String a -> RowState a
-liftEither (Right a) = return a
-liftEither (Left e) = RowState $ const (Left e)
+liftEither' :: Either String a -> RowState a
+liftEither' (Right a) = return a
+liftEither' (Left e) = RowState $ const (Left e)
 
-access :: ColType a -> String -> RowState a
+access :: ColType a -> String -> RowState' a
 access (unwrap, _) key = do
   let errMsg = "field '"++ key ++"' not found"
-  row <- getRow
+  row <- get
   atom <- Map.lookup key row & explain errMsg & liftEither
   atom & unwrap & liftEither
 
@@ -105,8 +109,8 @@ whenExists (unwrap, _) key rowOp = do
   let exists = (Map.lookup key row & explain "") >>= unwrap & isRight
   when exists rowOp
 
-bind :: ColType a -> String -> a -> RowState ()
-bind (_, wrap) key val = Map.insert key (wrap val) & modifyRow
+bind :: ColType a -> String -> a -> RowState' ()
+bind (_, wrap) key val = Map.insert key (wrap val) & modify
 
 release :: String -> RowState ()
 release = Map.delete .- modifyRow
@@ -117,15 +121,11 @@ keepOnly fields = zip fields (repeat ())
   & flip Map.intersection 
   & modifyRow
 
-exec :: RowState a -> [IndexedRow] -> Either String [IndexedRow]
-exec rowState rows = runRS rowState rows <&> map snd
+exec :: RowState' a -> [IndexedRow] -> Either String [IndexedRow]
+exec rowState = map (execStateT rowState .- runExceptT) .- concat .- sequence
 
-row1 = Map.fromList [("n",Number 1),("m",Number 2)]
+row2 = Map.fromList [("n",Number 1),("m",Number 2)]
 
-row2 = Map.fromList [("a",Number 1),("b",Number 2)]
+row1 = Map.fromList [("a",Number 1),("b",Number 2)]
 
 row3 = Map.fromList [("x",Number 1),("y",Number 2)]
-
-testRS = do
-  row <- getRow
-  when ("n" `Map.member` row) $ modifyRow (Map.insert "u" $ Words "bla")
