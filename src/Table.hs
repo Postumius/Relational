@@ -2,11 +2,13 @@
 {- cabal:
 ghc-options: -Wunused-imports
 build-depends: base, containers, lens, mtl
-other-modules: Utilities, RowState
+other-modules: Utilities
 -}
 
 module Table
 ( Table
+, Atom(Null, Number, Words)
+, IndexedRow
 , makeTable
 , rowsL
 , colsL
@@ -28,11 +30,11 @@ module Table
 , toRows
 , fromRows
 , sortIntoTables
-, mapRowOps_
+, things
+, leadsTo
 ) where
 
 import Utilities
-import RowState
 import Data.List
 import Data.Function
 import Data.Map.Strict (Map)
@@ -42,6 +44,15 @@ import qualified Data.Set as Set
 import Control.Lens
 import Data.List.NonEmpty (groupAllWith, toList)
 
+data Atom = Null | Number Int | Words String
+  deriving (Eq, Ord)
+
+instance Show Atom where
+  show Null = "Null"
+  show (Number n) = show n
+  show (Words str) = str
+
+type IndexedRow = Map String Atom
 
 newtype Table = Table { toMap :: (Map IndexedRow IndexedRow) }
 
@@ -244,12 +255,8 @@ toRows = view rowsL
 
 fromRows = (`zip` repeat Map.empty) .- Map.fromList .- Table
 
-applyRowOp rowOp table = table & view rowsL & (mapM $ exec rowOp)
-
 sortIntoTables :: Either String [IndexedRow] -> Either String [Table]
 sortIntoTables = fmap $ groupAllWith Map.keys .- map (toList .- fromRows)
-
-mapRowOps_ rowOps = toRows .- mapM (exec rowOps)
 
 things = makeTable
   ( ["item"],             ["description",                                          "location"])

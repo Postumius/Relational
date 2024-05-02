@@ -1,14 +1,12 @@
 #!/usr/bin/env cabal
 {- cabal:
 ghc-options: -Wunused-imports
-build-depends: base, containers, mtl, transformers
-other-modules: Utilities
+build-depends: base, containers, mtl, transformers, lens
+other-modules: Utilities, Table
 -}
 
 module RowState
-( Atom(Null, Number, Words)
-, IndexedRow
-, ColType
+( ColType
 , numberT
 , wordsT
 , access
@@ -20,6 +18,7 @@ module RowState
 ) where
 
 import Utilities
+import Table
 import Data.Function
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -29,15 +28,6 @@ import Data.Functor
 import Control.Monad.Error.Class
 import Control.Monad.Trans.Except
 
-data Atom = Null | Number Int | Words String
-  deriving (Eq, Ord)
-
-instance Show Atom where
-  show Null = "Null"
-  show (Number n) = show n
-  show (Words str) = str
-
-type IndexedRow = Map String Atom
 
 type ColType a = (Atom -> Either String a, a -> Atom)
 
@@ -60,9 +50,9 @@ type RowState a = StateT IndexedRow (ExceptT String []) a
 deleteRow :: RowState ()
 deleteRow = StateT $ const $ lift []
 
-bring :: [IndexedRow] -> RowState ()
-bring otherRows = StateT $ \row ->
-  Map.union <$> pure row <*> otherRows
+bring :: Table -> RowState ()
+bring table = StateT $ \row ->
+  Map.union <$> pure row <*> (table & toRows)
   & zip (repeat ())
   & lift
 
@@ -94,14 +84,16 @@ keepOnly fields = zip fields (repeat ())
 exec :: RowState a -> [IndexedRow] -> Either String [IndexedRow]
 exec rowState = map (execStateT rowState .- runExceptT) .- concat .- sequence
 
-foldRows :: (a -> RowState a) -> a -> [IndexedRow] -> Either String [IndexedRow]
-foldRows f first rows = foldM (\(prevResult, diffRows') row -> do
-    (result, row') <- runStateT (f prevResult) row
-    return (result,  diffRows' . ([row']++))
-  ) 
-  (first, id) rows
-  & runExceptT
-  & head
+foldRows :: (a -> RowState a) -> a -> Table -> Either String [IndexedRow]
+foldRows f first table = foldM (\(prevResult, diffRows') row -> do
+    (results, rows') <- runStateT (f prevResult) row 
+      & runExceptT 
+      & sequence 
+      <&> unzip
+    return $ if null results 
+      then (prevResult, diffRows')
+      else (last results,  diffRows' . (rows'++))
+  ) (first, id) (table & toRows)
   <&> snd
   <&> ($ [])
 
@@ -110,3 +102,19 @@ row2 = Map.fromList [("n",Number 1),("m",Number 2)]
 row1 = Map.fromList [("a",Number 1),("b",Number 2)]
 
 row3 = Map.fromList [("x",Number 1),("y",Number 2)]
+
+queryAddCol = sortIntoTables $ foldRows (\acc -> do
+    bind numberT "i" acc
+    return $ acc+1
+  ) 0 things
+
+queryJoin = sortIntoTables $ foldRows (\_ -> do
+    whenM (("player" /=) <$> access wordsT "item") $ 
+      deleteRow
+    bring leadsTo
+    location <- access wordsT "location"
+    from <- access wordsT "from"
+    when (location /= from) $ deleteRow
+    keepOnly ["location", "to"]
+  ) () things
+    
