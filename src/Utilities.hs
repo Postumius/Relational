@@ -4,6 +4,7 @@ module Utilities
 , explain
 ) where
 
+import Control.Monad
 import Control.Monad.State
 
 infixr 8 .-
