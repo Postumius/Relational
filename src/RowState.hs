@@ -2,13 +2,11 @@
 {- cabal:
 ghc-options: -Wunused-imports
 build-depends: base, containers, mtl, lens, transformers
-other-modules: Utilities
+other-modules: Utilities, Table
 -}
 
 module RowState
-( Atom(Null, Number, Words)
-, IndexedRow
-, ColType
+( ColType
 , numberT
 , wordsT
 , access
@@ -19,8 +17,9 @@ module RowState
 ) where
 
 import Utilities
+import Table
 import Data.Function
-import Data.Map.Strict (Map)
+-- import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Functor
 import Control.Monad
@@ -28,16 +27,6 @@ import Control.Monad.Trans.Cont
 import Data.Either
 import Control.Lens
 import Data.List
-
-data Atom = Null | Number Integer | Words String
-  deriving (Eq, Ord)
-
-instance Show Atom where
-  show Null = "Null"
-  show (Number n) = show n
-  show (Words str) = str
-
-type IndexedRow = Map String Atom
 
 type ColType a = (Atom -> Either String a, a -> Atom)
 
@@ -126,8 +115,8 @@ putAcc acc = rowOp $ \_ row -> Right (acc, [((), row)])
 
 modifyAcc = assembleModify getAcc putAcc
 
-bringIn :: [IndexedRow] -> RowOp r a ()
-bringIn otherRows = multiplyRow $ \row -> map (Map.union row) otherRows
+bringIn :: Table -> RowOp r a ()
+bringIn otherTable = multiplyRow $ \row -> map (Map.union row) (otherTable & view rowsL)
 
 liftEither :: Either String b -> RowOp r a b
 liftEither (Right x) = return x
@@ -146,7 +135,7 @@ whenExists (unwrap, _) key rowOp = do
   let exists = (Map.lookup key row & explain "") >>= unwrap & isRight
   when exists rowOp
 
-bind :: ColType a -> String -> a -> RowOp r a ()
+bind :: ColType b -> String -> b -> RowOp r a ()
 bind (_, wrap) key val = Map.insert key (wrap val) & modifyRow
 
 release :: String -> RowOp r a ()
@@ -158,9 +147,11 @@ keepOnly fields = zip fields (repeat ())
   & flip Map.intersection 
   & modifyRow
 
-applyAccum :: a -> [IndexedRow] -> RowOp b a b -> Either String (a, [b], [IndexedRow])
-applyAccum acc rows rs = 
-  putRows rows >> rs 
+applyAccum :: a -> Table -> RowOp b a b -> Either String (a, [b], [IndexedRow])
+applyAccum acc table op = 
+  table 
+  & view rowsL 
+  & putRows >> op
   & applyOp acc Map.empty
   <&> over _2 (reverse .- unzip)
   <&> (\(acc', (xs, rows)) -> (acc', xs, rows))
@@ -173,18 +164,29 @@ row3 = Map.fromList [("u",Number 1),("v",Number 2)]
 
 row4 = Map.fromList [("x",Number 1),("y",Number 2)]
 
-test1 = do
-  bringIn [row3, row4]
-  --getAcc >>= bind numberT "i"
-  modifyAcc (++"0")
+-- test1 = do
+--   bringIn [row3, row4]
+--   --getAcc >>= bind numberT "i"
+--   modifyAcc (++"0")
+-- 
+-- test2 = do
+--   getAcc >>= bind wordsT "j"
+--   modifyAcc (++"1")
+-- 
+-- testCombined = do
+--   bringIn [row3, row4]
+--   --getAcc >>= bind numberT "i"
+--   modifyAcc (++"0")
+--   getAcc >>= bind wordsT "j"
+--   modifyAcc (++"1")
 
-test2 = do
-  getAcc >>= bind wordsT "j"
-  modifyAcc (++"1")
-
-testCombined = do
-  bringIn [row3, row4]
-  --getAcc >>= bind numberT "i"
-  modifyAcc (++"0")
-  getAcc >>= bind wordsT "j"
-  modifyAcc (++"1")
+tableTest = (do
+    --modifyAcc $ over _1 (+1)
+    --suffix "2" leadsTo & bringIn
+    return ()
+    --modifyAcc $ over _2 (+1)
+    --getAcc <&> fst >>= bind numberT "i"
+    --getAcc <&> snd >>= bind numberT "j" 
+  )
+  & applyAccum (0, 0) (suffix "1" leadsTo)
+  & sortIntoTables

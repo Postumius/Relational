@@ -2,11 +2,13 @@
 {- cabal:
 ghc-options: -Wunused-imports
 build-depends: base, containers, lens, mtl
-other-modules: Utilities, RowState
+other-modules: Utilities
 -}
 
 module Table
-( Table
+( Atom(Null, Number, Words)
+, IndexedRow
+, Table
 , makeTable
 , rowsL
 , colsL
@@ -28,11 +30,11 @@ module Table
 , toRows
 , fromRows
 , sortIntoTables
-, mapRowOps_
+, things
+, leadsTo
 ) where
 
 import Utilities
-import RowState
 import Data.List
 import Data.Function
 import Data.Map.Strict (Map)
@@ -42,6 +44,15 @@ import qualified Data.Set as Set
 import Control.Lens
 import Data.List.NonEmpty (groupAllWith, toList)
 
+data Atom = Null | Number Integer | Words String
+  deriving (Eq, Ord)
+
+instance Show Atom where
+  show Null = "Null"
+  show (Number n) = show n
+  show (Words str) = str
+
+type IndexedRow = Map String Atom
 
 newtype Table = Table { toMap :: (Map IndexedRow IndexedRow) }
 
@@ -116,7 +127,7 @@ zipPairsWith f (a,b) (x,y) = (f a x, f b y)
 fromHdrCols hdrCols' = 
   let header' = hdrCols' & both %~ Map.keysSet
   in hdrCols' 
-     & both %~ Map.elems .- transpose
+     & both %~ Map.elems .- transpose .- (\rows -> if null rows then repeat [] else rows)
      & uncurry zip
      & map (zipPairsWith zipWithSet header')
      & Map.fromList
@@ -244,12 +255,12 @@ toRows = view rowsL
 
 fromRows = (`zip` repeat Map.empty) .- Map.fromList .- Table
 
-applyRowOp rowOp table = table & view rowsL & (mapM $ exec rowOp)
+-- applyRowOp rowOp table = table & view rowsL & (mapM $ exec rowOp)
 
-sortIntoTables :: Either String [IndexedRow] -> Either String [Table]
-sortIntoTables = fmap $ groupAllWith Map.keys .- map (toList .- fromRows)
+sortIntoTables :: Either String (a, [b], [IndexedRow]) -> Either String [Table]
+sortIntoTables = fmap $ view _3 .- groupAllWith Map.keys .- map (toList .- fromRows)
 
-mapRowOps_ rowOps = toRows .- mapM (exec rowOps)
+-- mapRowOps_ rowOps = toRows .- mapM (exec rowOps)
 
 things = makeTable
   ( ["item"],             ["description",                                          "location"])

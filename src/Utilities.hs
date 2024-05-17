@@ -5,7 +5,6 @@ module Utilities
 ) where
 
 import Control.Monad
-import Control.Monad.State
 
 infixr 8 .-
 (.-) f g = \x -> g (f x)
