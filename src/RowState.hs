@@ -180,13 +180,41 @@ row4 = Map.fromList [("x",Number 1),("y",Number 2)]
 --   getAcc >>= bind wordsT "j"
 --   modifyAcc (++"1")
 
-tableTest = (do
-    --modifyAcc $ over _1 (+1)
-    --suffix "2" leadsTo & bringIn
-    return ()
-    --modifyAcc $ over _2 (+1)
-    --getAcc <&> fst >>= bind numberT "i"
-    --getAcc <&> snd >>= bind numberT "j" 
+test1 = applyAccum 0 things (do
+    item <- access wordsT "item"
+    location <- access wordsT "location"
+    item ++ location & bind wordsT "itemlocation"
   )
-  & applyAccum (0, 0) (suffix "1" leadsTo)
+  & sortIntoTables
+
+
+test2 = applyAccum 0 things (do
+    item <- access wordsT "item"
+    when (item /= "player") deleteRow
+    suffix "2" things & bringIn
+    getAcc >>= bind numberT "i"
+    modifyAcc (+1)
+    -- loc1 <- access wordsT "location"
+    -- loc2 <- access wordsT "location2"
+    -- when (loc1 /= loc2) deleteRow
+    -- keepOnly ["description2", "item2"]
+  )
+  & sortIntoTables
+  <&> map (assignKey ["i"])
+
+testAcc = applyAccum 0 things (do
+    getAcc >>= bind numberT "i"
+    modifyAcc (+1)
+  )
+  & sortIntoTables
+  <&> map (assignKey ["i"])
+
+testJoin = applyAccum 0 things (do
+    whenM ((/=) <$> access wordsT "item" <*> (pure "player"))
+      deleteRow
+    bringIn leadsTo
+    whenM ((/=) <$> access wordsT "location" <*> access wordsT "from")
+      deleteRow
+    keepOnly ["to"]
+  )
   & sortIntoTables

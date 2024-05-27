@@ -27,6 +27,7 @@ module Table
 , renameCols
 , suffix
 , Table.groupBy
+, assignKey
 , toRows
 , fromRows
 , sortIntoTables
@@ -244,6 +245,15 @@ groupBy fields table = table
   & select fields
   & view rowsL
   & map (Map.isSubmapOf .- (`Table.filter` table))
+
+assignKey :: [String] -> Table -> Table
+assignKey fields table  = 
+  let cols = table & view colsL
+      fieldSet = Set.fromList fields
+  in ( Map.restrictKeys cols fieldSet
+     , Map.withoutKeys cols fieldSet
+     ) 
+     & fromHdrCols
 
 -- data Err = 
 --   FieldNotFound String |
