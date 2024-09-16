@@ -7,8 +7,12 @@ other-modules: Utilities
 
 module Table
 ( Atom(Null, Number, Words)
+, fromWords
 , IndexedRow
 , Table
+, fromMap
+, Table.null
+, toKeyVal
 , makeTable
 , rowsL
 , colsL
@@ -16,10 +20,14 @@ module Table
 , headerL
 , fieldsL
 , select
-, Table.filter
+, deselect
+, filterRows
 , hasVal
-, Table.insert
+, hasVals
+, internalInsert
+, internalDelete
 , Table.lookup
+, Table.member
 , filterByKey
 , innerJoin
 , onCols
@@ -33,6 +41,7 @@ module Table
 , sortIntoTables
 , things
 , leadsTo
+, containers
 ) where
 
 import Utilities
@@ -53,9 +62,16 @@ instance Show Atom where
   show (Number n) = show n
   show (Words str) = str
 
+fromWords :: Atom -> String
+fromWords (Words str) = str
+
 type IndexedRow = Map String Atom
 
 newtype Table = Table { toMap :: (Map IndexedRow IndexedRow) }
+
+fromMap = Table
+
+null = toMap .- Map.null
 
 instance Show Table where
   showsPrec _ table =
@@ -97,6 +113,9 @@ makeTable listHeader rowData =
       rows = rowData & map (zip (uncurry (++) listHeader) .- Map.fromList)
   in internalMakeTable header rows
 
+mapL :: Lens' Table (Map IndexedRow IndexedRow)
+mapL f (Table mp) = fmap Table $ f mp
+
 rowsL :: Lens' Table [IndexedRow]
 rowsL f (Table mp) = 
   let rows = mp & Map.toList & map (uncurry Map.union)
@@ -128,7 +147,7 @@ zipPairsWith f (a,b) (x,y) = (f a x, f b y)
 fromHdrCols hdrCols' = 
   let header' = hdrCols' & both %~ Map.keysSet
   in hdrCols' 
-     & both %~ Map.elems .- transpose .- (\rows -> if null rows then repeat [] else rows)
+     & both %~ Map.elems .- transpose .- (\rows -> if Data.List.null rows then repeat [] else rows)
      & uncurry zip
      & map (zipPairsWith zipWithSet header')
      & Map.fromList
@@ -180,20 +199,36 @@ fieldsL f (Table mp) =
 select :: [String] -> Table -> Table
 select = Set.fromList .- set fieldsL
 
-filter :: (IndexedRow -> Bool) -> Table -> Table
-filter = Data.List.filter .- over rowsL
+deselect :: [String] -> Table -> Table
+deselect = Set.fromList .- (flip Set.difference) .- over fieldsL
+-- deselect fields = over fieldsL (`Set.difference` Set.fromList fields)
+
+filterRows :: (IndexedRow -> Bool) -> Table -> Table
+filterRows = Data.List.filter .- over rowsL
 
 hasVal :: String -> Atom -> IndexedRow -> Bool
 hasVal field val = Map.lookup field .- (== Just val)
 
-insert :: IndexedRow -> Table -> Table
-insert row (Table mp) = 
-  let header@(keyFields, _) = Table mp ^. headerL
+hasVals :: [(String, Atom)] -> IndexedRow -> Bool
+hasVals pairs = (Map.fromList pairs `Map.isSubmapOf`)
+
+internalInsert :: IndexedRow -> Table -> Table
+internalInsert row table = 
+  let header = table ^. headerL 
   in if Map.keysSet row == uncurry Set.union header
-     then toKeyVal header row & (\(k,v)->Map.insert k v mp) & Table
+     then table & over mapL (toKeyVal header row & uncurry Map.insert)
      else error "row columns don't match table columns"
 
+internalDelete :: IndexedRow -> Table -> Table
+internalDelete key table = 
+  let (keyFields, _) = table ^. headerL
+  in if Map.keysSet key == keyFields
+     then table & over mapL (Map.delete key)
+     else error "key columns don't match table columns"
+
 lookup key (Table mp) = Map.lookup key mp
+
+member key (Table mp) = Map.member key mp
 
 filterByKey key = 
   Table.lookup key
@@ -244,7 +279,7 @@ suffix str table =
 groupBy fields table = table
   & select fields
   & view rowsL
-  & map (Map.isSubmapOf .- (`Table.filter` table))
+  & map (Map.isSubmapOf .- (`filterRows` table))
 
 assignKey :: [String] -> Table -> Table
 assignKey fields table  = 
@@ -294,4 +329,15 @@ leadsTo = makeTable
   , [Words "dining room", Words "living room"]
   , [Words "living room", Words "bathroom"]
   , [Words "bathroom",    Words "living room"]
+  ]
+
+containers = makeTable
+  ( ["item"], [] )
+  [ [Words "space"]
+  , [Words "living room"]
+  , [Words "player"]
+  , [Words "basket"]
+  , [Words "dining room"]
+  , [Words "bathroom"]
+  , [Words "toilet"]
   ]

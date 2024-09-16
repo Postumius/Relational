@@ -9,17 +9,30 @@ module RowState
 ( ColType
 , numberT
 , wordsT
+, RowOp
+, rowOp
+, applyOp
+, runOp
+, getRow
+, putRow
+, modifyRow
+, multiplyRow
+, deleteRow
+, getAcc
+, putAcc
+, modifyAcc
+, bringIn
 , access
-, whenM
-, whenExists
 , bind
 , release
+, whenExists
+, keepOnly
+, applyAccum
 ) where
 
 import Utilities
 import Table
 import Data.Function
--- import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Functor
 import Control.Monad
@@ -44,6 +57,7 @@ wordsT =
       unwrapWords atom = wrongType atom "wordsT"
   in (unwrapWords, Words)
 
+-- the monad instance of this isn't associative, but it becomes associative when wrapped in a ContT
 newtype InternalOp a b = InternalOp { runInternal :: a -> IndexedRow -> Either String (a, [(b, IndexedRow)]) }
 
 instance Functor (InternalOp a) where
@@ -60,6 +74,7 @@ instance Monad (InternalOp a) where
         runInternal (f x) aAcc row' <&> over _2 (++pairsAcc)
       ) (a', []) pairs
 
+-- the wrapping type which is exported, obeys monad laws as far as I can tell
 newtype RowOp r a b = RowOp { unwrapOp :: ContT r (InternalOp a) b }
 
 instance Functor (RowOp r a) where
